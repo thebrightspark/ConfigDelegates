@@ -1,4 +1,4 @@
-@file:Suppress("unused")
+@file:Suppress("unused", "MemberVisibilityCanBePrivate")
 
 package brightspark.configdelegates
 
@@ -10,7 +10,13 @@ import kotlin.properties.ReadOnlyProperty
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
-abstract class DelegatedConfig {
+/**
+ * Extending this class on a config class enables the use of [config] and [configMutable] methods to create configs.
+ *
+ * The [commonSpec], [clientSpec] and [serverSpec] are exposed for convenience, however an implementation should use
+ * [register] to register configs with Forge.
+ */
+abstract class DelegatedConfig(val defaultType: ConfigType = ConfigType.COMMON) {
 	private val configs: MutableList<ConfigDelegate<Any>> = mutableListOf()
 
 	private val commonBuilder = ForgeConfigSpec.Builder()
@@ -23,10 +29,10 @@ abstract class DelegatedConfig {
 	lateinit var clientSpec: ForgeConfigSpec
 	lateinit var serverSpec: ForgeConfigSpec
 
-	private fun getBuilder(side: ConfigSide): ForgeConfigSpec.Builder = when (side) {
-		ConfigSide.COMMON -> commonBuilder
-		ConfigSide.CLIENT -> clientBuilder
-		ConfigSide.SERVER -> serverBuilder
+	private fun getBuilder(type: ConfigType): ForgeConfigSpec.Builder = when (type) {
+		ConfigType.COMMON -> commonBuilder
+		ConfigType.CLIENT -> clientBuilder
+		ConfigType.SERVER -> serverBuilder
 	}
 
 	private fun initialize() {
@@ -36,12 +42,19 @@ abstract class DelegatedConfig {
 
 		ConfigDelegates.LOG.info("Initializing delegated config {}", this::class.qualifiedName)
 
-		configs.forEach { it.setConfigValue(getBuilder(it.side)) }
+		// Initialize each config
+		configs.forEach { it.setConfigValue(getBuilder(it.type)) }
+
+		// Build the config specs
 		commonSpec = commonBuilder.build()
 		clientSpec = clientBuilder.build()
 		serverSpec = serverBuilder.build()
 	}
 
+	/**
+	 * Registers this [DelegatedConfig] instance with Forge using [ModLoadingContext.registerConfig] for each type that
+	 * configs exist for.
+	 */
 	fun register(modLoadingContext: ModLoadingContext) {
 		initialize()
 
@@ -50,42 +63,65 @@ abstract class DelegatedConfig {
 			ConfigDelegates.LOG.info("Registering {} common configs", size)
 			modLoadingContext.registerConfig(ModConfig.Type.COMMON, commonSpec)
 		}
+
 		size = clientSpec.size()
 		if (size > 0) {
-			ConfigDelegates.LOG.info("Registering {} client config", size)
+			ConfigDelegates.LOG.info("Registering {} client configs", size)
 			modLoadingContext.registerConfig(ModConfig.Type.CLIENT, clientSpec)
 		}
+
 		size = serverSpec.size()
 		if (size > 0) {
-			ConfigDelegates.LOG.info("Registering {} server config", size)
+			ConfigDelegates.LOG.info("Registering {} server configs", size)
 			modLoadingContext.registerConfig(ModConfig.Type.SERVER, serverSpec)
 		}
 	}
 
-	private fun regConfigDelegate(configDelegate: ConfigDelegate<out Any>) {
+	internal fun regConfigDelegate(configDelegate: ConfigDelegate<out Any>) {
 		@Suppress("UNCHECKED_CAST")
 		configs.add(configDelegate as ConfigDelegate<Any>)
 	}
 
-	fun <T : Any> config(
-		side: ConfigSide,
+	/**
+	 * A read-only config delegate.
+	 * This is your typical config delegate to use, and only allows for the config to be read from.
+	 */
+	protected fun <T : Any> config(
+		type: ConfigType = defaultType,
 		builder: ForgeConfigSpec.Builder.() -> ConfigValue<T>
-	): ConfigDelegate<T> = ConfigDelegate(side, builder).apply { regConfigDelegate(this) }
+	): ConfigDelegate<T> = ConfigDelegate(this, type, builder)
 
-	fun <T : Any> configMutable(
-		side: ConfigSide,
+	/**
+	 * A mutable config delegate.
+	 * Extends functionality of the read-only delegate to allow modification of the config at runtime.
+	 */
+	protected fun <T : Any> configMutable(
+		type: ConfigType = defaultType,
 		builder: ForgeConfigSpec.Builder.() -> ConfigValue<T>
-	): ConfigDelegateMutable<T> = ConfigDelegateMutable(side, builder).apply { regConfigDelegate(this) }
+	): ConfigDelegateMutable<T> = ConfigDelegateMutable(this, type, builder)
 }
 
-enum class ConfigSide { COMMON, CLIENT, SERVER }
+/**
+ * The config type, which typically follows format with [ModConfig.Type].
+ */
+enum class ConfigType { COMMON, CLIENT, SERVER }
 
+/**
+ * The typical read-only config delegate class.
+ * Use [DelegatedConfig.config] to easily use this delegate.
+ */
 open class ConfigDelegate<T : Any>(
-	val side: ConfigSide,
+	configInstance: DelegatedConfig,
+	val type: ConfigType,
 	val builder: ForgeConfigSpec.Builder.() -> ConfigValue<T>
 ) : ReadOnlyProperty<Any?, T> {
 	protected var initialized = false
 	protected lateinit var configValue: ConfigValue<T>
+
+	init {
+		@Suppress("LeakingThis")
+		configInstance.regConfigDelegate(this)
+	}
 
 	fun setConfigValue(configSpecBuilder: ForgeConfigSpec.Builder) {
 		configValue = builder(configSpecBuilder)
@@ -98,10 +134,15 @@ open class ConfigDelegate<T : Any>(
 		throw UninitializedPropertyAccessException("ConfigDelegate ${property.name} has not been initialized")
 }
 
+/**
+ * A config delegate extending the functionality of [ConfigDelegate] to allow setting of the config value at runtime.
+ * Use [DelegatedConfig.configMutable] to easily use this delegate.
+ */
 class ConfigDelegateMutable<T : Any>(
-	side: ConfigSide,
+	configInstance: DelegatedConfig,
+	type: ConfigType,
 	builder: ForgeConfigSpec.Builder.() -> ConfigValue<T>
-) : ConfigDelegate<T>(side, builder), ReadWriteProperty<Any?, T> {
+) : ConfigDelegate<T>(configInstance, type, builder), ReadWriteProperty<Any?, T> {
 	override fun setValue(thisRef: Any?, property: KProperty<*>, value: T) = if (initialized)
 		configValue.set(value)
 	else
