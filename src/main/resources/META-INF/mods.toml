@@ -35,7 +35,7 @@ license="All rights reserved"
     authors="bright_spark" #optional
     # The description text for the mod (multi line!) (#mandatory)
     description='''
-
+    A simple lib mod adding config delegates for easy-to-use configs in Kotlin
     '''
 
 # A dependency - use the . to indicate dependency for a specific modid. Dependencies are optional.
