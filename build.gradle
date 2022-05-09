@@ -118,8 +118,6 @@ sourceSets.main.resources { srcDir 'src/generated/resources' }
 
 dependencies {
     minecraft 'net.minecraftforge:forge:1.16.5-36.2.34'
-
-    implementation 'org.jetbrains.kotlin:kotlin-reflect'
 }
 
 // Example for how to get properties into the manifest for reading by the runtime..
